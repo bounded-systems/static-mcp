@@ -39,6 +39,7 @@ import {
   type AnyVerbSpec,
   type Registry,
 } from "@bounded-systems/verbspec";
+import { verifyManifestBundle } from "@bounded-systems/verify";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Config — injected by the consumer. The core carries NO origin-specific values.
@@ -189,23 +190,20 @@ export function assertMatchesManifest(
 // ─────────────────────────────────────────────────────────────────────────────
 // Optional Sigstore verification of the manifest bytes against the bundle.
 //
-// Best-effort and dynamically imported so the core (hash) verification works
-// even when `sigstore` is not installed (it is an optional peer) or offline TUF
-// refresh is unavailable. When enabled it asserts the bundle's certificate
-// identity (SAN) and OIDC issuer match the expected signing workflow.
+// Delegated to `@bounded-systems/verify` (jsr) — the canonical, side-effect-free
+// in-process Sigstore-bundle verifier: the same `sigstore.verify(bundle,
+// manifestBytes, …)` call (signature + Fulcio cert chain + offline Rekor
+// inclusion) plus a cosign-style certificate-SAN identity match and OIDC-issuer
+// enforcement, against the expected signing workflow. verify@0.2.0 exports
+// `verifyManifestBundle(...)` and guards its CLI behind `import.meta.main`, so it
+// is safe to import in-process — this package no longer carries its own copy of
+// the check, and `sigstore` drops from its deps (verify pulls it transitively).
 //
-// INTENDED BACKEND: `@bounded-systems/verify` (jsr) — the canonical in-process
-// Sigstore-bundle verifier. This is the exact same check it performs internally
-// (`sigstore.verify(bundle, manifestBytes, …)` + a SAN/issuer match against the
-// builder identity). We would delegate to it directly, but verify@0.1.0 ships as
-// a self-executing CLI (`verify.mjs` reads `process.argv[2]` and `process.exit`s
-// on import) and exports NO callable function — importing it in-process would
-// terminate the host. GAP (filed, not forked): verify needs to (a) guard its CLI
-// behind `import.meta.main`, and (b) export a function, e.g.
-// `verifyManifestBundle(bundle, manifestBytes, { issuer, identity }): Promise<Signer>`.
-// When it does, this function collapses to a one-line delegation to verify and
-// `sigstore` drops from this package's deps. Until then we keep this minimal,
-// behaviorally-identical copy of the in-process check.
+// This wrapper only adapts verify's result/throw contract to
+// {@link Config.signatureMode} (`off` no-op · `warn` reports failures as an
+// unverified result · `require` throws) and the local {@link SignatureResult}.
+// The per-file sha256 manifest match ({@link assertMatchesManifest}) stays here —
+// that is static-mcp's job, not verify's.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Outcome of an attempted manifest-signature verification. */
@@ -215,9 +213,10 @@ export interface SignatureResult {
 }
 
 /**
- * Verify a Sigstore bundle over the manifest bytes against the expected signer.
- * Honors {@link Config.signatureMode}: `off` is a no-op, `warn` reports failures
- * as an unverified result, `require` throws.
+ * Verify a Sigstore bundle over the manifest bytes against the expected signer,
+ * by delegating to `@bounded-systems/verify`'s `verifyManifestBundle`. Honors
+ * {@link Config.signatureMode}: `off` is a no-op, `warn` reports failures as an
+ * unverified result, `require` throws.
  */
 export async function verifyManifestSignature(
   manifestBytes: Uint8Array,
@@ -228,27 +227,14 @@ export async function verifyManifestSignature(
     return { verified: false, reason: "signature verification disabled" };
   }
 
-  type Sigstore = {
-    verify: (bundle: unknown, data: Buffer, opts: unknown) => Promise<void>;
-  };
-  let sigstore: Sigstore;
   try {
-    // Bare specifier so the optional dep stays optional in both Node and Deno;
-    // a missing module is caught and handled per `signatureMode`.
-    sigstore = (await import("sigstore")) as unknown as Sigstore;
-  } catch {
-    const reason = "the optional `sigstore` package is not installed";
-    if (config.signatureMode === "require") {
-      throw new Error(`cannot verify manifest signature: ${reason}`);
-    }
-    return { verified: false, reason };
-  }
-
-  try {
-    const bundle = JSON.parse(bundleJsonText);
-    await sigstore.verify(bundle, Buffer.from(manifestBytes), {
-      certificateIdentityURI: config.expectedSignerIdentity,
-      certificateOIDCIssuer: config.expectedSignerIssuer,
+    // Cryptographic bundle verification (signature + Fulcio cert + offline Rekor
+    // inclusion) plus the cert-SAN identity + issuer match — all inside verify.
+    await verifyManifestBundle({
+      bundle: bundleJsonText,
+      manifest: Buffer.from(manifestBytes),
+      identity: config.expectedSignerIdentity,
+      issuer: config.expectedSignerIssuer,
     });
     return { verified: true };
   } catch (err) {

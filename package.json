@@ -34,11 +34,9 @@
   },
   "dependencies": {
     "@bounded-systems/verbspec": "npm:@jsr/bounded-systems__verbspec@^0.3.1",
+    "@bounded-systems/verify": "npm:@jsr/bounded-systems__verify@^0.2.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "zod": "^4.4.3"
-  },
-  "optionalDependencies": {
-    "sigstore": "^3.0.0"
   },
   "devDependencies": {
     "@types/node": "^20.14.0",

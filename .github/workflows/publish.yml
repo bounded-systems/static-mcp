@@ -2,6 +2,11 @@ name: publish
 
 # Publish @bounded-systems/static-mcp to JSR and npm using KEYLESS OIDC.
 #
+# Dual mirror: the package ships to BOTH registries (the user owns the
+# @bounded-systems npm org). Node MCP servers (site-mcp) consume it from npm; Deno
+# from JSR. Its JSR-only deps (@bounded-systems/verbspec, @bounded-systems/verify)
+# reach Node via JSR's npm bridge (see .npmrc).
+#
 # No tokens are stored in this repo:
 #   - JSR: `deno publish` mints a short-lived GitHub Actions OIDC token JSR trusts
 #     (link the repo once at jsr.io/@bounded-systems/static-mcp → Settings).

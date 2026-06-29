@@ -9,12 +9,14 @@
   "imports": {
     "zod": "npm:zod@^4.4.3",
     "@modelcontextprotocol/sdk/": "npm:/@modelcontextprotocol/sdk@^1.29.0/",
-    "@bounded-systems/verbspec": "jsr:@bounded-systems/verbspec@^0.3.1"
+    "@bounded-systems/verbspec": "jsr:@bounded-systems/verbspec@^0.3.1",
+    "@bounded-systems/verify": "jsr:@bounded-systems/verify@^0.2.0"
   },
   "publish": {
     "exclude": [
       "**/*.test.ts",
       "test/**",
+      "src/verify.d.ts",
       "dist/**",
       "node_modules/**",
       ".github/**",

@@ -25,15 +25,15 @@ Published to **both** registries so either ecosystem can consume it:
 # Deno / JSR-native
 deno add jsr:@bounded-systems/static-mcp
 
-# Node / npm (its verbspec dep comes from JSR via the npm bridge — see .npmrc)
+# Node / npm (its JSR-only deps come from JSR via the npm bridge — see .npmrc)
 npm install @bounded-systems/static-mcp
 ```
 
 > **Why both?** The Bounded Systems libraries (`verbspec`, `verify`, `lone`)
 > publish to JSR. `static-mcp` does too — but it is consumed by Node MCP servers
-> (`site-mcp`), so it also ships to npm. Its only JSR-only dependency,
-> `@bounded-systems/verbspec`, is pulled into Node via JSR's npm bridge
-> (`@jsr:registry=https://npm.jsr.io` in `.npmrc`).
+> (`site-mcp`), so it also ships to npm. Its JSR-only dependencies,
+> `@bounded-systems/verbspec` and `@bounded-systems/verify`, are pulled into Node
+> via JSR's npm bridge (`@jsr:registry=https://npm.jsr.io` in `.npmrc`).
 
 ## Use
 
@@ -118,7 +118,7 @@ const { stdout, stderr, code } = await runStaticCli(spec, config, ["get_post", "
 | `withDefaults(input)` | Fill the generic, non-origin defaults around a `ConfigInput`. |
 | `ApiClient` | The verifying client: `getVerified(path)` returns a `VerifiedArtifact` or throws. |
 | `parseManifest`, `assertMatchesManifest`, `sha256Hex` | The manifest / hash-check primitives. |
-| `verifyManifestSignature` | Optional Sigstore check of the manifest bundle. |
+| `verifyManifestSignature` | Optional Sigstore check of the manifest bundle (delegates to `@bounded-systems/verify`). |
 | `VerificationError` | Thrown when bytes don't match (or aren't in) the signed manifest. |
 | Types | `Config`, `ConfigInput`, `StaticMcpSpec`, `VerifiedResource`, `VerifiedResourceTemplate`, `StaticDeps`, `VerifiedArtifact`, `Manifest`, `ServerInfo` |
 | Re-exports | `defineVerb`, `toMcpTool`, `toMcpToolset`, `verbToken`, and verbspec types |
@@ -142,20 +142,16 @@ those carry the origin's identity, which the core never hard-codes.
 2. **Manifest signature check (optional).** With `signatureMode` `warn` or
    `require`, verify the Sigstore bundle over the manifest against the expected
    GitHub Actions workflow identity, anchoring the manifest to the build that
-   produced it. Uses the optional [`sigstore`](https://www.npmjs.com/package/sigstore)
-   dependency (dynamically imported; absent → handled per mode).
+   produced it.
 
-   > **Intended backend — [`@bounded-systems/verify`](https://jsr.io/@bounded-systems/verify).**
-   > This is the exact in-process check verify performs
-   > (`sigstore.verify(bundle, manifest, …)` + a SAN/issuer match), and we mean
-   > for static-mcp to be verify's first real consumer. **Gap (filed, not
-   > forked):** `verify@0.1.0` ships as a self-executing CLI — `verify.mjs` reads
-   > `process.argv[2]` and `process.exit`s on import, and exports no function, so
-   > it can't be called in-process. Once verify (a) guards its CLI behind
-   > `import.meta.main` and (b) exports a `verifyManifestBundle(bundle, bytes,
-   > { issuer, identity })`, this collapses to a one-line delegation and the
-   > `sigstore` dep drops. Until then static-mcp keeps this minimal,
-   > behaviorally-identical copy.
+   > **Backend — [`@bounded-systems/verify`](https://jsr.io/@bounded-systems/verify).**
+   > As of `verify@0.2.0` this check is **delegated** to verify's exported
+   > `verifyManifestBundle({ bundle, manifest, identity, issuer })` — the canonical
+   > in-process Sigstore-bundle verifier (`sigstore.verify(bundle, manifest, …)` +
+   > a cosign-style cert-SAN identity + issuer match). static-mcp is verify's first
+   > real consumer; it no longer carries its own copy of the check, and the direct
+   > `sigstore` dependency is dropped (verify pulls it transitively). static-mcp
+   > keeps only its own manifest parse + per-file sha256 match.
 
 ## Development
 

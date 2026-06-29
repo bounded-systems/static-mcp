@@ -1,0 +1,18 @@
+{
+  // Cloudflare Worker that hosts a verified-static MCP over Streamable HTTP.
+  // Docs: https://developers.cloudflare.com/workers/wrangler/configuration/
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "example-remote-mcp",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-06-01",
+  // `nodejs_compat` provides `node:crypto` (used by the package's stdio path) so
+  // the bundle resolves cleanly. The remote handler itself verifies via Web
+  // Crypto (`crypto.subtle`), which needs no flag. With `signatureMode: "off"`
+  // the Sigstore graph (sigstore-js → TUF) is never imported into the bundle.
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true
+  }
+  // Attach a custom domain / route in the Cloudflare dashboard or with `routes`:
+  // "routes": [{ "pattern": "mcp.example.dev", "custom_domain": true }]
+}

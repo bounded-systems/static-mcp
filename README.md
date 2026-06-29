@@ -107,20 +107,97 @@ drift:
 const { stdout, stderr, code } = await runStaticCli(spec, config, ["get_post", "slug-here"]);
 ```
 
+### Remote transport (Streamable HTTP — host it, connect by URL)
+
+`serveVerifiedStaticMcp` is the **local** transport (stdio — the client spawns a
+subprocess). `createHttpHandler` is the **remote** transport: a Web-standard
+`(Request) => Response` handler that serves the *same* verified-static MCP over
+HTTP ([MCP Streamable HTTP](https://modelcontextprotocol.io)), so clients connect
+by **URL** — no local install. It runs anywhere the Fetch API does: a
+**Cloudflare Worker** `fetch` handler, Deno/Bun, or Node 18+.
+
+```ts
+import { createHttpHandler } from "@bounded-systems/static-mcp";
+
+// same `spec` + `config` as above
+const handler = createHttpHandler(spec, config); // (Request) => Promise<Response>
+
+// Cloudflare Worker entry:
+export default { fetch: (req: Request) => handler(req) };
+```
+
+It reuses the exact same verbs, resource catalog, and verifying client as the
+stdio transport — every response is still matched byte-for-byte against the
+signed manifest. The only differences are runtime-shaped:
+
+- the per-response SHA-256 runs on **Web Crypto** (`crypto.subtle`), so it needs
+  no `node:crypto` and works inside a Worker; and
+- it is **stateless** — a fresh MCP server + transport per request, while the
+  verifying client (and its cached manifest) is shared across requests in a warm
+  isolate.
+
+#### Deploy to Cloudflare Workers
+
+A complete example lives in [`examples/worker/`](./examples/worker) (a
+`wrangler.jsonc` + a Worker entry that serves the MCP at `/mcp`):
+
+```bash
+cd examples/worker
+npm install
+npx wrangler login       # one-time
+npx wrangler deploy      # prints https://<worker>.<account>.workers.dev
+```
+
+The MCP endpoint is that URL + `/mcp`. Point any MCP client at it as a
+**Streamable HTTP** server:
+
+```jsonc
+{
+  "mcpServers": {
+    "example-remote": {
+      "type": "http",
+      "url": "https://<worker>.<account>.workers.dev/mcp"
+    }
+  }
+}
+```
+
+#### Remote verification model (honest + deliberately weaker than stdio)
+
+The remote transport proves **content integrity per request** and trusts
+**manifest authenticity as established at deploy time** — not per request:
+
+- **Per-response content integrity — always, every request.** Each tool/resource
+  result is SHA-256'd (Web Crypto) and required to equal the origin's signed
+  `site.sha256` manifest entry before it is returned. A MITM, a stale CDN edge, a
+  tampered file, or a path that isn't a signed artifact ⇒ a `VerificationError`,
+  not a response.
+- **Manifest signature — at deploy, not per request.** The manifest's Sigstore
+  signature is **not** re-verified inside a Worker: `@bounded-systems/verify` →
+  sigstore-js needs TUF + Node `crypto`/`fs`, which don't run there (and it is
+  lazy-imported, so it never enters the Worker bundle). It is trusted as verified
+  at deploy time — the same signed bytes the origin already serves. Hence the
+  remote default is `signatureMode: "off"`.
+
+> For **per-request** signature verification (the full Sigstore check on every
+> call), use the stdio/Node transport (`serveVerifiedStaticMcp`) with
+> `signatureMode: "warn" | "require"`.
+
 ## API
 
 | Export | What it is |
 | --- | --- |
-| `serveVerifiedStaticMcp(spec, config)` | Build the server and serve it over **stdio**. The one-call entry. |
+| `serveVerifiedStaticMcp(spec, config)` | **Local transport.** Build the server and serve it over **stdio**. The one-call entry. |
+| `createHttpHandler(spec, config, options?)` | **Remote transport.** A `(Request) => Promise<Response>` Streamable-HTTP handler for Cloudflare Workers / Deno / Bun / Node — clients connect by URL. |
 | `buildVerifiedStaticServer(spec, config, client?)` | Build (don't connect) the `McpServer` — for tests / embedding. |
 | `runStaticCli(spec, config, argv, client?)` | Run the same verbs as a CLI; returns `{ stdout, stderr, code }`. |
 | `verifiedVerb({ id, summary, input, resolve })` | Author a `VerbSpec` that fetches + verifies one artifact. |
 | `withDefaults(input)` | Fill the generic, non-origin defaults around a `ConfigInput`. |
-| `ApiClient` | The verifying client: `getVerified(path)` returns a `VerifiedArtifact` or throws. |
-| `parseManifest`, `assertMatchesManifest`, `sha256Hex` | The manifest / hash-check primitives. |
-| `verifyManifestSignature` | Optional Sigstore check of the manifest bundle (delegates to `@bounded-systems/verify`). |
+| `ApiClient` | The verifying client: `getVerified(path)` returns a `VerifiedArtifact` or throws. Takes an optional `(config, fetch?, hash?)`. |
+| `parseManifest`, `assertMatchesManifest`, `compareDigestToManifest`, `sha256Hex`, `sha256HexWebCrypto` | The manifest / hash-check primitives. `sha256HexWebCrypto` is the Worker-safe (Web Crypto) digest. |
+| `verifyManifestSignature` | Optional Sigstore check of the manifest bundle (lazy-delegates to `@bounded-systems/verify`). |
 | `VerificationError` | Thrown when bytes don't match (or aren't in) the signed manifest. |
-| Types | `Config`, `ConfigInput`, `StaticMcpSpec`, `VerifiedResource`, `VerifiedResourceTemplate`, `StaticDeps`, `VerifiedArtifact`, `Manifest`, `ServerInfo` |
+| Types | `Config`, `ConfigInput`, `StaticMcpSpec`, `HttpHandlerOptions`, `HashFn`, `VerifiedResource`, `VerifiedResourceTemplate`, `StaticDeps`, `VerifiedArtifact`, `Manifest`, `ServerInfo` |
 | Re-exports | `defineVerb`, `toMcpTool`, `toMcpToolset`, `verbToken`, and verbspec types |
 
 ### `Config`

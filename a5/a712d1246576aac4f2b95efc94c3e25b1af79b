@@ -1,0 +1,28 @@
+src/index.ts
+  s_98e316d0b3248a::t_b7a078258a989a 34-36
+  s_98e316d0b3248a::t_d162d9ca7fe0ee 429-430,441
+  s_98e316d0b3248a::t_3e6988523e7bc8 196-208
+  s_98e316d0b3248a::t_d625c3e4030f5f 669-751
+README.md
+  s_98e316d0b3248a::t_460e0946db346f 116
+  s_98e316d0b3248a::t_66a482eb92d9b7 148-159
+  s_98e316d0b3248a::t_91984a9d3c5ccb 96-109
+test/cli.test.ts
+  s_98e316d0b3248a::t_0d128edd722a16 1-103
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.3",
+  "base_commit_sha": "a5a712d1246576aac4f2b95efc94c3e25b1af79b",
+  "prompts": {},
+  "sessions": {
+    "s_98e316d0b3248a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8db980ee-eb6b-4866-832b-f795cef7f33c",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Robert DeLanghe <oink_monocle_7d@icloud.com>"
+    }
+  }
+}

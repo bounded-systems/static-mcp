@@ -1,0 +1,30 @@
+{
+  "name": "@bounded-systems/static-mcp",
+  "version": "0.1.0",
+  "exports": "./src/index.ts",
+  "nodeModulesDir": "auto",
+  "compilerOptions": {
+    "lib": ["ESNext", "DOM", "DOM.Iterable"]
+  },
+  "imports": {
+    "zod": "npm:zod@^4.4.3",
+    "@modelcontextprotocol/sdk/": "npm:/@modelcontextprotocol/sdk@^1.29.0/",
+    "@bounded-systems/verbspec": "jsr:@bounded-systems/verbspec@^0.3.1"
+  },
+  "publish": {
+    "exclude": [
+      "**/*.test.ts",
+      "test/**",
+      "dist/**",
+      "node_modules/**",
+      ".github/**",
+      "tsconfig.json",
+      "package.json",
+      "package-lock.json",
+      ".npmrc"
+    ]
+  },
+  "tasks": {
+    "check": "deno check src/index.ts"
+  }
+}

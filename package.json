@@ -1,0 +1,63 @@
+{
+  "name": "@bounded-systems/static-mcp",
+  "version": "0.1.0",
+  "description": "Serve @bounded-systems/verbspec verbs as a read-only, Sigstore-verified static-response MCP server. Every resource and tool result is checked byte-for-byte against the origin's signed sha256 manifest. Generic core: the origin and signer identity are injected.",
+  "license": "MIT",
+  "author": "Robert DeLanghe",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "engines": {
+    "node": ">=18.17"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "prepare": "npm run build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --import tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@bounded-systems/verbspec": "npm:@jsr/bounded-systems__verbspec@^0.3.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "zod": "^4.4.3"
+  },
+  "optionalDependencies": {
+    "sigstore": "^3.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.0",
+    "tsx": "^4.16.0",
+    "typescript": "^5.5.0"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "verbspec",
+    "sigstore",
+    "provenance",
+    "static-api",
+    "stdio",
+    "bounded-systems"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bounded-systems/static-mcp.git"
+  },
+  "homepage": "https://github.com/bounded-systems/static-mcp#readme"
+}

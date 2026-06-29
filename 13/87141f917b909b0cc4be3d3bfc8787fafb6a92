@@ -1,0 +1,50 @@
+test/api.test.ts
+  s_98e316d0b3248a::t_d4bf9c17a5829d 1-95
+test/manifest.test.ts
+  s_98e316d0b3248a::t_03375aa13ef2ae 1-47
+deno.json
+  s_98e316d0b3248a::t_d4330b49eb95d3 1-4,9-16,18-20,25-30
+  s_98e316d0b3248a::t_f107a1917fc265 6-8
+  s_98e316d0b3248a::t_cde5db32cc99f4 17,21-24
+  s_98e316d0b3248a::t_1816ccae14829b 5
+.npmrc
+  s_98e316d0b3248a::t_0e4db1609c4eb8 1
+.gitignore
+  s_98e316d0b3248a::t_bcbc4ab7ac5665 1-6
+.github/workflows/publish.yml
+  s_98e316d0b3248a::t_db7d8aacefd959 1-56
+test/server.test.ts
+  s_98e316d0b3248a::t_9513db3a8e597e 1-128
+README.md
+  s_98e316d0b3248a::t_125eee2fbc95e5 1-153
+src/index.ts
+  s_98e316d0b3248a::t_069e075a7260e7 662-669
+  s_98e316d0b3248a::t_caa8cb0ef61b25 1-214,219-221,223-661,670-675
+  s_98e316d0b3248a::t_88f72828ac898e 215-218,222
+package.json
+  s_98e316d0b3248a::t_00fb80eadec6d3 1-63
+tsconfig.json
+  s_98e316d0b3248a::t_5d02d474a8a19d 1-18
+LICENSE
+  s_98e316d0b3248a::t_291404a810e82a 1-21
+deno.lock
+  s_98e316d0b3248a::t_5c8d05e76508b2 1-752
+package-lock.json
+  s_98e316d0b3248a::t_28685bfbcaa098 1-2832
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.3",
+  "base_commit_sha": "1387141f917b909b0cc4be3d3bfc8787fafb6a92",
+  "prompts": {},
+  "sessions": {
+    "s_98e316d0b3248a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "8db980ee-eb6b-4866-832b-f795cef7f33c",
+        "model": "claude-opus-4-8"
+      },
+      "human_author": "Robert DeLanghe <oink_monocle_7d@icloud.com>"
+    }
+  }
+}

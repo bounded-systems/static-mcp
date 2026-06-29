@@ -31,6 +31,9 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import type { ZodType } from "zod";
 import {
   defineVerb,
+  parseArgs,
+  render as renderJson,
+  toHelp,
   toMcpTool,
   verbToken,
   type AnyVerbSpec,
@@ -190,6 +193,19 @@ export function assertMatchesManifest(
 // even when `sigstore` is not installed (it is an optional peer) or offline TUF
 // refresh is unavailable. When enabled it asserts the bundle's certificate
 // identity (SAN) and OIDC issuer match the expected signing workflow.
+//
+// INTENDED BACKEND: `@bounded-systems/verify` (jsr) — the canonical in-process
+// Sigstore-bundle verifier. This is the exact same check it performs internally
+// (`sigstore.verify(bundle, manifestBytes, …)` + a SAN/issuer match against the
+// builder identity). We would delegate to it directly, but verify@0.1.0 ships as
+// a self-executing CLI (`verify.mjs` reads `process.argv[2]` and `process.exit`s
+// on import) and exports NO callable function — importing it in-process would
+// terminate the host. GAP (filed, not forked): verify needs to (a) guard its CLI
+// behind `import.meta.main`, and (b) export a function, e.g.
+// `verifyManifestBundle(bundle, manifestBytes, { issuer, identity }): Promise<Signer>`.
+// When it does, this function collapses to a one-line delegation to verify and
+// `sigstore` drops from this package's deps. Until then we keep this minimal,
+// behaviorally-identical copy of the in-process check.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Outcome of an attempted manifest-signature verification. */
@@ -410,6 +426,8 @@ export function verifiedVerb<I extends ZodType>(opts: {
   actor?: string;
   /** Zod input schema. Defaults to an empty object (no args). */
   input: I;
+  /** Input keys parsed as CLI positionals (in order) rather than `--flags`. */
+  positionals?: readonly string[];
   /** Map validated input → the manifest-relative artifact path to verify. */
   resolve: (input: import("zod").infer<I>, deps: StaticDeps) => string;
 }): AnyVerbSpec {
@@ -420,6 +438,7 @@ export function verifiedVerb<I extends ZodType>(opts: {
     summary: opts.summary,
     actor: opts.actor ?? "anon",
     input: opts.input,
+    positionals: opts.positionals,
     // deno-lint-ignore no-explicit-any
     output: undefined as any,
     run: async (input: import("zod").infer<I>, deps?: StaticDeps) => {
@@ -645,6 +664,89 @@ export function buildVerifiedStaticServer(
   }
 
   return server;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// CLI projection: the SAME VerbSpec verbs, the other surface verbspec offers.
+//
+// verbspec projects one verb to BOTH an MCP tool and a CLI subcommand; here we
+// reuse its `parseArgs` (the single argv→Zod-input parser the MCP tool input
+// also validates with) and `toHelp` (the `--help` printer). One verb definition,
+// two surfaces — no drift. Output is the verified artifact's bytes, exactly what
+// the MCP tool returns.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The captured outcome of a CLI invocation (pure — the caller does the I/O). */
+export interface CliResult {
+  stdout: string;
+  stderr: string;
+  /** Process exit code: 0 ok · 1 verification/usage failure · 2 bad arguments. */
+  code: number;
+}
+
+/** Usage text: the bin, then one line per verb (its CLI subcommand + summary). */
+function cliUsage(spec: StaticMcpSpec, bin: string): string {
+  const lines = [
+    `${bin} <command> [args]    — verified, read-only access to a signed static API`,
+    "",
+    "Commands:",
+  ];
+  for (const v of Object.values(spec.verbs)) {
+    lines.push(`  ${verbToken(v.id).padEnd(18)} ${v.summary}`);
+  }
+  lines.push("", `Run \`${bin} <command> --help\` for a command's flags.`);
+  return lines.join("\n");
+}
+
+/**
+ * Run the verbs as a CLI: resolve a subcommand → parse argv against the verb's
+ * Zod input (via verbspec's `parseArgs`) → run it through the verifying client →
+ * print the verified bytes. A {@link VerificationError} fails closed (exit 1).
+ * Pure: returns a {@link CliResult}; the caller writes the streams and exits.
+ */
+export async function runStaticCli(
+  spec: StaticMcpSpec,
+  config: Config,
+  argv: readonly string[],
+  client: ApiClient = new ApiClient(config),
+): Promise<CliResult> {
+  const bin = spec.server.name;
+  const [id, ...rest] = argv;
+
+  if (!id || id === "help" || id === "--help" || id === "-h") {
+    return { stdout: cliUsage(spec, bin), stderr: "", code: id ? 0 : 1 };
+  }
+
+  const verb = spec.verbs[id] ?? Object.values(spec.verbs).find((v) => verbToken(v.id) === id);
+  if (!verb) {
+    return { stdout: "", stderr: `unknown command: ${id}\n\n${cliUsage(spec, bin)}`, code: 1 };
+  }
+  if (rest.includes("--help") || rest.includes("-h")) {
+    return { stdout: toHelp(verb, bin), stderr: "", code: 0 };
+  }
+
+  let input: unknown;
+  try {
+    input = parseArgs(verb, rest);
+  } catch (err) {
+    return {
+      stdout: "",
+      stderr: `invalid arguments for "${verbToken(verb.id)}": ${
+        err instanceof Error ? err.message : String(err)
+      }`,
+      code: 2,
+    };
+  }
+
+  const deps: StaticDeps = { client, apiPath: (file: string) => client.apiPath(file), config };
+  try {
+    const result = await verb.run(input, deps);
+    const text = isVerifiedArtifact(result) ? result.text : renderJson(result);
+    return { stdout: text, stderr: "", code: 0 };
+  } catch (err) {
+    // VerificationError (or any run failure) fails closed — print nothing.
+    return { stdout: "", stderr: err instanceof Error ? err.message : String(err), code: 1 };
+  }
 }
 
 /**

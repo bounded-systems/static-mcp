@@ -93,12 +93,27 @@ never drift from the verb. Resource reads and tool results carry a
 `_meta.verification` block (manifest-relative path, source URL, the verified
 `sha256`, and the manifest signature status).
 
+### Two surfaces, one definition
+
+`verbspec` projects each verb to **both** an MCP tool and a CLI subcommand. The
+same `spec.verbs` therefore also drive a CLI — `runStaticCli(spec, config, argv)`
+reuses verbspec's `parseArgs`/`toHelp` to resolve a subcommand, validate argv
+against the verb's Zod input (the exact schema the MCP tool enforces), run it
+through the verifying client, and print the verified bytes. A verification
+failure exits non-zero with nothing on stdout. One verb set, two surfaces, no
+drift:
+
+```ts
+const { stdout, stderr, code } = await runStaticCli(spec, config, ["get_post", "slug-here"]);
+```
+
 ## API
 
 | Export | What it is |
 | --- | --- |
 | `serveVerifiedStaticMcp(spec, config)` | Build the server and serve it over **stdio**. The one-call entry. |
 | `buildVerifiedStaticServer(spec, config, client?)` | Build (don't connect) the `McpServer` — for tests / embedding. |
+| `runStaticCli(spec, config, argv, client?)` | Run the same verbs as a CLI; returns `{ stdout, stderr, code }`. |
 | `verifiedVerb({ id, summary, input, resolve })` | Author a `VerbSpec` that fetches + verifies one artifact. |
 | `withDefaults(input)` | Fill the generic, non-origin defaults around a `ConfigInput`. |
 | `ApiClient` | The verifying client: `getVerified(path)` returns a `VerifiedArtifact` or throws. |
@@ -129,6 +144,18 @@ those carry the origin's identity, which the core never hard-codes.
    GitHub Actions workflow identity, anchoring the manifest to the build that
    produced it. Uses the optional [`sigstore`](https://www.npmjs.com/package/sigstore)
    dependency (dynamically imported; absent → handled per mode).
+
+   > **Intended backend — [`@bounded-systems/verify`](https://jsr.io/@bounded-systems/verify).**
+   > This is the exact in-process check verify performs
+   > (`sigstore.verify(bundle, manifest, …)` + a SAN/issuer match), and we mean
+   > for static-mcp to be verify's first real consumer. **Gap (filed, not
+   > forked):** `verify@0.1.0` ships as a self-executing CLI — `verify.mjs` reads
+   > `process.argv[2]` and `process.exit`s on import, and exports no function, so
+   > it can't be called in-process. Once verify (a) guards its CLI behind
+   > `import.meta.main` and (b) exports a `verifyManifestBundle(bundle, bytes,
+   > { issuer, identity })`, this collapses to a one-line delegation and the
+   > `sigstore` dep drops. Until then static-mcp keeps this minimal,
+   > behaviorally-identical copy.
 
 ## Development
 

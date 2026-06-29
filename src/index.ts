@@ -28,6 +28,7 @@
 import { createHash } from "node:crypto";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import type { ZodType } from "zod";
 import {
   defineVerb,
@@ -39,7 +40,12 @@ import {
   type AnyVerbSpec,
   type Registry,
 } from "@bounded-systems/verbspec";
-import { verifyManifestBundle } from "@bounded-systems/verify";
+// NB: `@bounded-systems/verify` (→ sigstore-js → TUF / node fs/crypto deps) is
+// imported *lazily*, inside `verifyManifestSignature`, only when `signatureMode`
+// is not "off". This keeps the heavy Sigstore graph out of the module's eager
+// import set so the `createHttpHandler` remote transport bundles cleanly for a
+// Cloudflare Worker (where `signatureMode` is "off" and the manifest's authenticity
+// is established at deploy time — see "Remote transport" in the README).
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Config — injected by the consumer. The core carries NO origin-specific values.
@@ -150,10 +156,37 @@ export function parseManifest(text: string): Manifest {
   return map;
 }
 
-/** Lowercase hex SHA-256 of `bytes`. */
+/** Lowercase hex SHA-256 of `bytes`, via Node's `crypto` (synchronous). */
 export function sha256Hex(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
 }
+
+/**
+ * Lowercase hex SHA-256 of `bytes`, via the **Web Crypto** API
+ * (`crypto.subtle.digest`). Async, and dependency-free of `node:crypto` — the
+ * digest path that runs in a Cloudflare Worker (and Deno / Bun / browsers /
+ * Node 18+). Used by {@link createHttpHandler}'s remote transport so the
+ * per-response manifest match needs no Node built-ins.
+ */
+export async function sha256HexWebCrypto(bytes: Uint8Array): Promise<string> {
+  // Copy into a fresh ArrayBuffer-backed Uint8Array so `subtle.digest` accepts
+  // it regardless of how `bytes` was constructed (a Buffer subview, or a
+  // SharedArrayBuffer-backed view, neither of which is a plain `BufferSource`).
+  const view = new Uint8Array(bytes.byteLength);
+  view.set(bytes);
+  const digest = await crypto.subtle.digest("SHA-256", view);
+  const out = new Uint8Array(digest);
+  let hex = "";
+  for (const b of out) hex += b.toString(16).padStart(2, "0");
+  return hex;
+}
+
+/**
+ * A pluggable SHA-256 hasher: `bytes` → lowercase hex digest. Sync or async.
+ * Defaults to {@link sha256Hex} (Node `crypto`); the remote transport injects
+ * {@link sha256HexWebCrypto} (Web Crypto) so it runs without `node:crypto`.
+ */
+export type HashFn = (bytes: Uint8Array) => string | Promise<string>;
 
 /** The result of a successful per-file hash check. */
 export interface VerifiedBytes {
@@ -163,13 +196,15 @@ export interface VerifiedBytes {
 }
 
 /**
- * Assert that `bytes` match the manifest entry for `path`. Throws
- * {@link VerificationError} on a missing entry or a digest mismatch.
+ * Compare an already-computed `actual` digest against the manifest entry for
+ * `path`. Throws {@link VerificationError} on a missing entry or a mismatch.
+ * The hashing is the caller's choice (sync Node `crypto` or async Web Crypto),
+ * so this stays a pure, transport-agnostic comparison.
  */
-export function assertMatchesManifest(
+export function compareDigestToManifest(
   manifest: Manifest,
   path: string,
-  bytes: Uint8Array,
+  actual: string,
 ): VerifiedBytes {
   const expected = manifest.get(path);
   if (!expected) {
@@ -177,7 +212,6 @@ export function assertMatchesManifest(
       `no manifest entry for "${path}" — it is not a signed artifact of this origin`,
     );
   }
-  const actual = sha256Hex(bytes);
   if (actual !== expected) {
     throw new VerificationError(
       `digest mismatch for "${path}": manifest=${expected} fetched=${actual} ` +
@@ -185,6 +219,20 @@ export function assertMatchesManifest(
     );
   }
   return { path, expected, actual };
+}
+
+/**
+ * Assert that `bytes` match the manifest entry for `path`, hashing with Node's
+ * synchronous `crypto`. Throws {@link VerificationError} on a missing entry or a
+ * digest mismatch. (The remote transport uses the Web-Crypto path via
+ * {@link compareDigestToManifest} + {@link sha256HexWebCrypto} instead.)
+ */
+export function assertMatchesManifest(
+  manifest: Manifest,
+  path: string,
+  bytes: Uint8Array,
+): VerifiedBytes {
+  return compareDigestToManifest(manifest, path, sha256Hex(bytes));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -228,6 +276,9 @@ export async function verifyManifestSignature(
   }
 
   try {
+    // Lazy import: only pull in the Sigstore graph when a signature check is
+    // actually requested (see the note on the import block above).
+    const { verifyManifestBundle } = await import("@bounded-systems/verify");
     // Cryptographic bundle verification (signature + Fulcio cert + offline Rekor
     // inclusion) plus the cert-SAN identity + issuer match — all inside verify.
     await verifyManifestBundle({
@@ -286,6 +337,13 @@ export class ApiClient {
   constructor(
     private readonly config: Config,
     private readonly fetchImpl: typeof fetch = fetch,
+    /**
+     * SHA-256 hasher for the per-response manifest match. Defaults to
+     * {@link sha256Hex} (Node `crypto`, sync). The remote transport passes
+     * {@link sha256HexWebCrypto} so the check runs on Web Crypto with no
+     * `node:crypto` dependency (Cloudflare Workers, Deno, Bun, browsers).
+     */
+    private readonly hash: HashFn = sha256Hex,
   ) {}
 
   /** Resolve a manifest-relative path to its absolute URL on the origin. */
@@ -361,7 +419,7 @@ export class ApiClient {
     const { manifest } = await this.getManifest();
     const url = this.urlFor(path);
     const { bytes, text } = await this.fetchBytes(url);
-    const verification = assertMatchesManifest(manifest, path, bytes);
+    const verification = compareDigestToManifest(manifest, path, await this.hash(bytes));
 
     let json: unknown;
     try {
@@ -755,6 +813,114 @@ export async function serveVerifiedStaticMcp(
       `${spec.server.name} ready (stdio) → ${config.baseUrl}; ` +
         `signature mode=${config.signatureMode}`,
     );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Remote transport: Streamable HTTP (MCP spec) over Web-standard Request/Response.
+//
+// `serveVerifiedStaticMcp` above is the *local* transport (stdio — the client
+// spawns a subprocess). This is the *remote* transport: a `(Request) => Response`
+// handler that serves the same verified-static MCP over HTTP, so clients connect
+// by URL with no local install. It runs anywhere the Fetch API exists — a
+// Cloudflare Worker `fetch` handler, Deno/Bun, or Node 18+ — because it is built
+// on the SDK's Web-standard Streamable HTTP transport.
+//
+// Worker verification model (read this — it is deliberately weaker than stdio):
+//   • Per-response content integrity (ALWAYS on, per request): every tool/resource
+//     result is SHA-256'd with **Web Crypto** ({@link sha256HexWebCrypto}, no
+//     `node:crypto`) and required to equal the signed manifest entry before it is
+//     returned. Tamper / stale-edge / wrong-path ⇒ {@link VerificationError}.
+//   • Manifest *authenticity* (the Sigstore signature over the manifest) is NOT
+//     re-checked per request in a Worker — sigstore-js (TUF, Node crypto/fs) does
+//     not run there. It is established at **deploy time** (the same signed bytes
+//     the origin already serves), so the remote default is `signatureMode: "off"`.
+//   In short: the remote transport proves *content integrity* per request; it
+//   trusts *manifest authenticity* as verified at deploy, not per request. For
+//   per-request signature verification, use the stdio/Node transport.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Options for the {@link createHttpHandler} remote transport. */
+export interface HttpHandlerOptions {
+  /**
+   * Fetch used to reach the signed static origin. Defaults to the global
+   * `fetch`. In a Worker you can pass a `fetch` bound to a service/asset binding
+   * to read the origin without leaving the edge.
+   */
+  fetchImpl?: typeof fetch;
+  /**
+   * SHA-256 hasher for the per-response manifest match. Defaults to
+   * {@link sha256HexWebCrypto} (Web Crypto — Worker-safe, no `node:crypto`).
+   */
+  hash?: HashFn;
+  /**
+   * Return a single JSON response per POST instead of opening an SSE stream.
+   * Defaults to `true` — the right mode for a stateless Worker (no long-lived
+   * connections). Set `false` only if you need server-streamed notifications.
+   */
+  enableJsonResponse?: boolean;
+  /**
+   * Share one verifying {@link ApiClient} (and its cached manifest) across
+   * requests. Defaults to `true`: within a warm isolate the signed manifest is
+   * fetched once and reused. Pass your own client to fully control caching.
+   */
+  client?: ApiClient;
+}
+
+/**
+ * Build a **remote** MCP transport: a Streamable-HTTP request handler
+ * (`(Request) => Promise<Response>`) that serves `spec` + `config` as a
+ * verified-static MCP over HTTP. Drop it into a Cloudflare Worker `fetch`
+ * handler (or any Fetch-API runtime) and clients connect by URL — no local
+ * install.
+ *
+ * It reuses the exact same machinery as the stdio transport — the verbs, the
+ * resource catalog, and {@link buildVerifiedStaticServer} — so every response is
+ * still matched byte-for-byte against the signed manifest. The only difference is
+ * the hash runs on **Web Crypto** (so it works without `node:crypto`) and the
+ * manifest signature is trusted as verified at deploy time rather than re-checked
+ * per request (see the section comment above; default `signatureMode: "off"`).
+ *
+ * Statelessness: a **new** transport (and MCP server) is created per request
+ * (the SDK's Web-standard Streamable HTTP transport refuses reuse in stateless
+ * mode), while the verifying {@link ApiClient} — and thus the cached manifest —
+ * is shared across requests within a warm isolate.
+ *
+ * @example
+ * ```ts
+ * // Cloudflare Worker entry
+ * const handler = createHttpHandler(spec, config);
+ * export default { fetch: (req: Request) => handler(req) };
+ * ```
+ */
+export function createHttpHandler(
+  spec: StaticMcpSpec,
+  config: Config,
+  options: HttpHandlerOptions = {},
+): (request: Request) => Promise<Response> {
+  const client = options.client ??
+    new ApiClient(config, options.fetchImpl ?? fetch, options.hash ?? sha256HexWebCrypto);
+  const enableJsonResponse = options.enableJsonResponse ?? true;
+
+  return async (request: Request): Promise<Response> => {
+    // Stateless mode: the Web-standard transport must NOT be reused across
+    // requests (it throws on the second `handleRequest`), so build a fresh
+    // server + transport per request. The shared `client` keeps the signed
+    // manifest cached across them.
+    const server = buildVerifiedStaticServer(spec, config, client);
+    const transport = new WebStandardStreamableHTTPServerTransport({
+      sessionIdGenerator: undefined, // stateless — no session header to track
+      enableJsonResponse,
+    });
+    await server.connect(transport);
+    try {
+      return await transport.handleRequest(request);
+    } finally {
+      // Best-effort teardown of the per-request server/transport. In JSON mode
+      // the Response is already fully resolved, so this frees the handlers
+      // without truncating the body.
+      void server.close();
+    }
+  };
 }
 
 // Re-export the verbspec primitives a consumer needs to author verbs, so a thin

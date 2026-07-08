@@ -27,15 +27,16 @@
 
 import { createHash } from "node:crypto";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
+// The generic base: this topic layer registers its verbs as tools through it, injecting the
+// verifying deps + shaping results, and reuses its stdout-safe stdio connect.
+import { buildMcpServer, connectStdio } from "@bounded-systems/verbspec-mcp";
 import type { ZodType } from "zod";
 import {
   defineVerb,
   parseArgs,
   render as renderJson,
   toHelp,
-  toMcpTool,
   verbToken,
   type AnyVerbSpec,
   type Registry,
@@ -580,17 +581,6 @@ export function buildVerifiedStaticServer(
     config,
   };
 
-  const server = new McpServer(
-    { name: spec.server.name, version: spec.server.version },
-    {
-      instructions: spec.server.instructions ??
-        `Read-only access to ${config.baseUrl}'s signed static API. Every ` +
-          `resource and tool result is verified byte-for-byte against the ` +
-          `origin's Sigstore-signed sha256 manifest before being returned; a ` +
-          `mismatch is an error.`,
-    },
-  );
-
   async function signatureNote(): Promise<string> {
     const { signature } = await client.getManifest();
     if (config.signatureMode === "off") return "not-checked (disabled)";
@@ -598,6 +588,40 @@ export function buildVerifiedStaticServer(
       ? "verified"
       : `unverified (${signature.reason ?? "unknown"})`;
   }
+
+  // ---- Tools, via the generic base (@bounded-systems/verbspec-mcp) ----
+  // The base owns tool registration, Zod input validation, and running each verb. This layer
+  // supplies only what makes it a *verified-static* topic layer: `deps` injects the verifying
+  // client into every verb's run, and `mapResult` shapes the output — a verified fetch returns
+  // its bytes as content + json as structuredContent + a provenance `_meta`; a plain compute verb
+  // JSON-stringifies. Resources (below) have no VerbSpec analogue, so this layer keeps them and
+  // registers them on the server the base returns.
+  const server = buildMcpServer(spec.verbs, {
+    name: spec.server.name,
+    version: spec.server.version,
+    instructions: spec.server.instructions ??
+      `Read-only access to ${config.baseUrl}'s signed static API. Every ` +
+        `resource and tool result is verified byte-for-byte against the ` +
+        `origin's Sigstore-signed sha256 manifest before being returned; a ` +
+        `mismatch is an error.`,
+    deps: () => deps,
+    mapResult: async (out) => {
+      if (!isVerifiedArtifact(out)) {
+        // A verb that returned plain structured data (not a verified fetch).
+        return {
+          content: [{ type: "text" as const, text: JSON.stringify(out) }],
+          structuredContent: typeof out === "object" && out !== null
+            ? (out as Record<string, unknown>)
+            : { value: out },
+        };
+      }
+      return {
+        content: [{ type: "text" as const, text: out.text }],
+        structuredContent: out.json as Record<string, unknown>,
+        _meta: verificationMeta(out, await signatureNote()),
+      };
+    },
+  });
 
   // ---- Fixed resources ----
   for (const r of spec.resources ?? []) {
@@ -661,50 +685,6 @@ export function buildVerifiedStaticServer(
         };
       },
     );
-  }
-
-  // ---- Tools, projected from the VerbSpec registry ----
-  for (const verb of Object.values(spec.verbs)) {
-    const tool = toMcpTool(verb); // name + description + inputSchema, from verbspec
-    const hasInput =
-      Object.keys((tool.inputSchema as { properties?: object }).properties ?? {}).length > 0;
-
-    const handler = async (...args: unknown[]) => {
-      // With an input schema the SDK passes (parsedArgs, extra); without, (extra).
-      const input = hasInput ? args[0] : {};
-      const result = await verb.run(input, deps);
-      if (!isVerifiedArtifact(result)) {
-        // A verb that returned plain structured data (not a verified fetch).
-        return {
-          content: [{ type: "text" as const, text: JSON.stringify(result) }],
-          structuredContent: (typeof result === "object" && result !== null
-            ? (result as Record<string, unknown>)
-            : { value: result }),
-        };
-      }
-      return {
-        content: [{ type: "text" as const, text: result.text }],
-        structuredContent: result.json as Record<string, unknown>,
-        _meta: verificationMeta(result, await signatureNote()),
-      };
-    };
-
-    if (hasInput) {
-      server.registerTool(
-        tool.name,
-        // The verb's Zod input is the validator the SDK advertises + enforces.
-        { description: tool.description, inputSchema: verb.input },
-        // deno-lint-ignore no-explicit-any
-        handler as any,
-      );
-    } else {
-      server.registerTool(
-        tool.name,
-        { description: tool.description },
-        // deno-lint-ignore no-explicit-any
-        handler as any,
-      );
-    }
   }
 
   return server;
@@ -803,8 +783,9 @@ export async function serveVerifiedStaticMcp(
   config: Config,
 ): Promise<void> {
   const server = buildVerifiedStaticServer(spec, config);
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+  // The base's stdio connect — owns stdout hygiene (console → stderr) so a verb's stray log
+  // can't corrupt the JSON-RPC stream — plus the StdioServerTransport wiring.
+  await connectStdio(server);
   // Readiness line on stderr only (stdout is the MCP channel). Accessed through
   // `globalThis` so the lib (DOM/node/Deno) carrying `console` need not be
   // pinned — it is present in every runtime that runs an MCP stdio server.

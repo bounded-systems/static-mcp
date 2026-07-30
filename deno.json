@@ -8,7 +8,7 @@
   },
   "imports": {
     "zod": "npm:zod@^4.4.3",
-    "@modelcontextprotocol/sdk/": "npm:/@modelcontextprotocol/sdk@^1.29.0/",
+    "@modelcontextprotocol/sdk/": "npm:/@modelcontextprotocol/sdk@^1.30.0/",
     "@bounded-systems/verbspec": "jsr:@bounded-systems/verbspec@^0.3.1",
     "@bounded-systems/verbspec-mcp": "jsr:@bounded-systems/verbspec-mcp@^0.1.0",
     "@bounded-systems/verify": "jsr:@bounded-systems/verify@^0.2.0"

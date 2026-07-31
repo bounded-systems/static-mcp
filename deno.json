@@ -4,14 +4,24 @@
   "exports": "./src/index.ts",
   "nodeModulesDir": "auto",
   "compilerOptions": {
-    "lib": ["ESNext", "DOM", "DOM.Iterable"]
+    "lib": [
+      "ESNext",
+      "DOM",
+      "DOM.Iterable"
+    ]
   },
   "imports": {
     "zod": "npm:zod@^4.4.3",
     "@modelcontextprotocol/sdk/": "npm:/@modelcontextprotocol/sdk@^1.30.0/",
     "@bounded-systems/verbspec": "jsr:@bounded-systems/verbspec@^0.3.1",
     "@bounded-systems/verbspec-mcp": "jsr:@bounded-systems/verbspec-mcp@^0.1.0",
-    "@bounded-systems/verify": "jsr:@bounded-systems/verify@^0.2.0"
+    "@bounded-systems/verify": "jsr:@bounded-systems/verify@^0.2.0",
+    // Rung-3 override (ci-workflows REMEDIATION.md): GHSA-3jxr-9vmj-r5cp (7.7,
+    // fixed 5.0.7) and GHSA-mh99-v99m-4gvg (7.5, fixed 5.0.8). minimatch@10.2.5
+    // admits these versions but deno kept a stale 5.0.6 entry that no re-resolve
+    // would move; npm took 5.0.9 from the same manifest. Promoting it to a direct
+    // import leaves the resolver no room. Remove once deno advances it unaided.
+    "brace-expansion": "npm:brace-expansion@^5.0.8"
   },
   "publish": {
     "exclude": [

@@ -21,7 +21,25 @@
     // admits these versions but deno kept a stale 5.0.6 entry that no re-resolve
     // would move; npm took 5.0.9 from the same manifest. Promoting it to a direct
     // import leaves the resolver no room. Remove once deno advances it unaided.
-    "brace-expansion": "npm:brace-expansion@^5.0.8"
+    "brace-expansion": "npm:brace-expansion@^5.0.9",
+    // Rung-3 overrides, same mechanism and same reason as brace-expansion above.
+    // All three are transitive and every fixed version is ALREADY inside the range
+    // its parent declares — fast-uri ^3.0.1 via ajv; hono ^4.11.4 via
+    // @modelcontextprotocol/sdk and ^4 via @hono/node-server; ip-address via
+    // express-rate-limit and socks — but `deno outdated --update` moves declared
+    // dependencies only, so it left all three on their stale pins while npm took
+    // the fixed versions from the same manifests (see the package-lock.json side,
+    // already clean). Promoting them to direct imports leaves the resolver no room.
+    //   fast-uri    3.1.4    -> GHSA-7p8r-x3mc-p8w7 (7.5, fixed 3.1.5)
+    //   hono        4.12.32  -> GHSA-54fx-42gc-7vw4, -79qm-7rj5-m7r9,
+    //                           -8j4g-w8fx-2239, -f23p-vx2j-j53r (fixed 4.12.34)
+    //   ip-address  10.2.0   -> GHSA-22jq-vg5j-6vgg (fixed 10.2.1),
+    //                           GHSA-4xrf-jv44-h6hh (10.2.2),
+    //                           GHSA-mwp4-54f8-5fhr (7.7, 10.3.1)
+    // Remove each once deno advances it unaided.
+    "fast-uri": "npm:fast-uri@^3.1.6",
+    "hono": "npm:hono@^4.13.5",
+    "ip-address": "npm:ip-address@^10.5.0"
   },
   "publish": {
     "exclude": [

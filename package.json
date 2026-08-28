@@ -40,9 +40,9 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@types/node": "^20.14.0",
-    "tsx": "^4.16.0",
-    "typescript": "^5.5.0"
+    "@types/node": "^26.3.0",
+    "tsx": "^4.23.12",
+    "typescript": "^7.0.2"
   },
   "keywords": [
     "mcp",
